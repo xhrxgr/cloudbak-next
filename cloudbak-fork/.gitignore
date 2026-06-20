@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local env / config
+.env
+.env.local
+.env.*.local
+
+# Local ref repos
+_weflow_ref_*/
+_wechat-dump-rs-*/
+
+# Backend data
+backend/data/
+backend/db/
+backend/tmp/
+backend/logs/
+backend/head/
+backend/sessions/
+backend/task/
+*.db
+*.sqlite
+*.sqlite3
+backend/data_output/
+
+# Frontend dist
+frontend/dist/
+
+# Frontend node cache
+frontend/.cache/
+
+# Sensitive
+**/wxkey/
+**/image_keys.json

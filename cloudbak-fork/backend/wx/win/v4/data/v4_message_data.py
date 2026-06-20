@@ -7,6 +7,7 @@ from google.protobuf.internal import decoder
 from sqlalchemy import inspect, select, func, literal_column
 
 from app.enum.msg_enum import FilterMode
+from app.services.parse_message import parse_message
 from config.log_config import logger
 from wx.common.filters.msg_filter import MsgFilterObj, SingleMsgFilterObj
 from wx.common.output.message import MsgSearchOut, Msg, WindowsV4Properties
@@ -189,6 +190,13 @@ class MessageManagerWindowsV4(MessageManager):
                     msg.message_content_data = ZstandardUtils.convert_zstandard(m.message_content)
                     msg.source_data = ZstandardUtils.convert_zstandard(m.source)
                     msg.compress_content_data = ZstandardUtils.convert_zstandard(m.compress_content)
+                    # 通用消息内容解析（文本/视频/语音/位置/名片/链接/合并转发/转账/红包 等）
+                    try:
+                        msg.parsed_content = parse_message(
+                            msg.local_type, msg.message_content_data
+                        )
+                    except Exception as e:
+                        logger.warning("解析消息内容失败: %s", e)
                     # 图片消息：从 packed_info_data 提取 md5 并构造相对路径
                     if msg.local_type == 3 and m.packed_info_data:
                         md5 = _extract_packed_md5(m.packed_info_data)

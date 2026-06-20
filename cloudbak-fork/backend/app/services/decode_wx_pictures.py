@@ -3,6 +3,10 @@ import os
 import io
 import json
 import struct
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 
 from Crypto.Cipher import AES
 from Crypto.Util import Padding
@@ -10,6 +14,13 @@ from Crypto.Util import Padding
 from app.helper.directory_helper import get_wx_dir
 from app.models.sys import SysSession
 from config.log_config import logger
+
+# 优先使用项目内 ffmpeg，否则回退到系统 PATH 中的 ffmpeg
+FFMPEG_BIN = (
+    os.environ.get("WX_FFMPEG_BIN")
+    or shutil.which("ffmpeg")
+    or ""
+)
 
 tp = {
     "jpg": 0xFFD8,
@@ -102,6 +113,127 @@ def _decrypt_v2(data: bytes, aes_key: bytes, xor_key: int) -> bytes | None:
     return aes_data + raw_data + xor_data
 
 
+def _extract_hevc_nalus(buffer: bytes) -> list[bytes]:
+    """从 wxgf 数据中提取 HEVC NALU 裸流。
+
+    wxgf 内部是微信图片的 HEVC 编码，前 4 字节是 "wxgf" 标识，
+    之后是若干 NALU（以 00 00 00 01 或 00 00 01 分隔）。
+    """
+    if len(buffer) < 20 or buffer[:4] != b"wxgf":
+        return []
+
+    units: list[bytes] = []
+    starts: list[int] = []
+    i = 4
+    while i < len(buffer) - 3:
+        if (buffer[i] == 0 and buffer[i + 1] == 0
+                and buffer[i + 2] == 0 and buffer[i + 3] == 1):
+            starts.append(i)
+            i += 4
+            continue
+        if (buffer[i] == 0 and buffer[i + 1] == 0
+                and buffer[i + 2] == 1):
+            starts.append(i)
+            i += 3
+            continue
+        i += 1
+
+    for idx, start in enumerate(starts):
+        end = starts[idx + 1] if idx + 1 < len(starts) else len(buffer)
+        prefix_len = 4 if buffer[start + 2] == 0 and buffer[start + 3] == 1 else 3
+        payload = buffer[start + prefix_len:end]
+        if len(payload) < 2:
+            continue
+        if (payload[0] & 0x80) == 0:  # 必须有 forbidden_zero_bit=1 才合法
+            continue
+        units.append(payload)
+    return units
+
+
+def _hevc_to_jpg_via_ffmpeg(hevc_data: bytes) -> bytes | None:
+    """将 HEVC 裸流转码为一帧 JPG。需要 ffmpeg 可用。"""
+    if not FFMPEG_BIN:
+        return None
+    with tempfile.TemporaryDirectory(prefix="wxgf_") as tmp:
+        tmp_dir = Path(tmp)
+        in_path = tmp_dir / "in.hevc"
+        out_path = tmp_dir / "out.jpg"
+        in_path.write_bytes(hevc_data)
+        # 依次尝试不同输入格式
+        attempts = [
+            ["-f", "hevc", "-i", str(in_path)],
+            ["-f", "h265", "-i", str(in_path)],
+            ["-i", str(in_path)],
+        ]
+        for input_args in attempts:
+            try:
+                if out_path.exists():
+                    out_path.unlink()
+                result = subprocess.run(
+                    [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
+                     *input_args,
+                     "-vframes", "1", "-q:v", "2", "-f", "image2", str(out_path)],
+                    timeout=20,
+                    capture_output=True,
+                )
+                if result.returncode == 0 and out_path.exists():
+                    jpg = out_path.read_bytes()
+                    if jpg and jpg[:3] == b"\xff\xd8\xff":
+                        return jpg
+            except Exception as e:
+                logger.debug("ffmpeg 尝试 %s 失败: %s", input_args, e)
+        return None
+
+
+def _unwrap_wxgf(buffer: bytes) -> bytes:
+    """解包 wxgf/WxAM 格式。
+
+    微信 4.x 部分图片使用 HEVC 编码并以 wxgf 头封装。
+    解密后如果数据以 'wxgf' 开头但找不到内嵌传统图片签名，
+    则按 VPS(32) 分组后用 ffmpeg 转码为 JPG。
+    """
+    if len(buffer) < 20 or buffer[:4] != b"wxgf":
+        return buffer
+
+    # 先尝试找内嵌的传统图片签名
+    for i in range(4, min(len(buffer) - 12, 4096)):
+        if buffer[i] == 0xFF and buffer[i + 1] == 0xD8 and buffer[i + 2] == 0xFF:
+            return buffer[i:]
+        if (buffer[i] == 0x89 and buffer[i + 1] == 0x50
+                and buffer[i + 2] == 0x4E and buffer[i + 3] == 0x47):
+            return buffer[i:]
+
+    units = _extract_hevc_nalus(buffer)
+    if not units:
+        return buffer
+
+    # 按 VPS (nal_unit_type=32) 分组，找含 VCL 帧的最大组
+    def unit_type(u: bytes) -> int:
+        return (u[0] >> 1) & 0x3F
+
+    vps_starts = [i for i, u in enumerate(units) if len(u) >= 2 and unit_type(u) == 32]
+    candidates: list[tuple[str, bytes]] = []
+    for gi, start in enumerate(vps_starts):
+        end = vps_starts[gi + 1] if gi + 1 < len(vps_starts) else len(units)
+        group = units[start:end]
+        if not any(unit_type(u) in (1, 19, 20) for u in group if len(u) >= 2):
+            continue
+        merged = b"".join(b"\x00\x00\x00\x01" + u for u in group)
+        candidates.append((f"vps_group_{gi}", merged))
+
+    candidates.append(("scan_all", b"".join(b"\x00\x00\x00\x01" + u for u in units)))
+    candidates.append(("raw_skip4", buffer[4:]))
+
+    for name, hevc in candidates:
+        if len(hevc) < 100:
+            continue
+        jpg = _hevc_to_jpg_via_ffmpeg(hevc)
+        if jpg:
+            logger.info("wxgf -> jpg via ffmpeg, candidate=%s, size=%d", name, len(jpg))
+            return jpg
+    return buffer
+
+
 def decrypt_images(sys_session: SysSession):
     wx_dir = get_wx_dir(sys_session)
     msg_attach_dir = os.path.join(wx_dir, 'FileStorage/MsgAttach/')
@@ -156,9 +288,10 @@ def decrypt_file(encrypted_file_path, aes_key=None, xor_key=None):
     if data.startswith(V2_HEADER) and aes_key and xor_key is not None:
         decrypted_data = _decrypt_v2(data, aes_key, xor_key)
         if decrypted_data:
+            decrypted_data = _unwrap_wxgf(decrypted_data)
             ext = _detect_extension(decrypted_data)
             if ext == "wxgf":
-                logger.warning("WxAM 压缩图片暂不支持自动解压: %s", encrypted_file_path)
+                logger.warning("WxAM 压缩图片无法转码: %s", encrypted_file_path)
                 return None
             if not ext:
                 logger.warning("V2 解密后无法识别图片格式: %s", encrypted_file_path)
@@ -231,6 +364,8 @@ def decrypt_file_return_io(encrypted_file_path, aes_key=None, xor_key=None):
 
     if data.startswith(V2_HEADER) and aes_key and xor_key is not None:
         decrypted_data = _decrypt_v2(data, aes_key, xor_key)
+        if decrypted_data:
+            decrypted_data = _unwrap_wxgf(decrypted_data)
     else:
         a1, a2 = data[0], data[1]
         result = match_bytes(a1, a2)

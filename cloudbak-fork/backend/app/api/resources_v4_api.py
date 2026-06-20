@@ -126,19 +126,68 @@ async def get_video_thumb(md5: str, session_id: int):
 
 
 @router.get("/video/{session_id}/{md5}")
-async def get_video_thumb(md5: str, session_id: int):
+async def get_video(md5: str, session_id: int):
     """
-    根据 md5获取 video
+    根据 md5 获取视频文件（v4 微信）
+
+    路径规则：msg/video/{wxid_hash}/{yyyy-MM}/{md5}.mp4
     """
     client = ClientFactory.get_client_by_id(session_id)
-    resource_manager = client.get_resource_manager()
-    path = resource_manager.get_video(md5)
-    if not path:
-        raise HTTPException(status_code=405, detail="file not found")
-    if not os.path.exists(path):
-        logger.warn(f"poster path is not exists: {path}")
-        raise HTTPException(status_code=405, detail="file not found")
-    return FileResponse(path)
+    base_dir = client.get_wx_dir()
+    # 先尝试 v4 路径（msg/video/）
+    candidate_paths = []
+    my_wxid = getattr(client, "my_wxid", None) or getattr(client, "wxid", None) or ""
+    my_hash = hashlib.md5(my_wxid.encode("utf-8")).hexdigest() if my_wxid else ""
+    for sub in ("msg/video", "FileStorage/Video"):
+        # 按月份扫一遍
+        vdir = os.path.join(base_dir, sub)
+        if not os.path.isdir(vdir):
+            continue
+        try:
+            for m in os.listdir(vdir):
+                cand = os.path.join(vdir, m, f"{md5}.mp4")
+                if os.path.exists(cand):
+                    candidate_paths.append(cand)
+        except Exception:
+            pass
+    if not candidate_paths:
+        # 退到 v3 资源管理器
+        try:
+            resource_manager = client.get_resource_manager()
+            path = resource_manager.get_video(md5)
+            if path and os.path.exists(path):
+                candidate_paths.append(path)
+        except Exception:
+            pass
+    if not candidate_paths:
+        raise HTTPException(status_code=404, detail="video not found")
+    return FileResponse(candidate_paths[0], media_type="video/mp4")
+
+
+@router.get("/image-by-md5")
+async def image_by_md5(md5: str, session_id: int, kind: str = "emoji"):
+    """通过 md5 在 hardlink/Img 目录中查找图片（表情/缩略图）"""
+    client = ClientFactory.get_client_by_id(session_id)
+    if client is None:
+        raise HTTPException(status_code=404, detail="client not found")
+    base_dir = client.get_wx_dir()
+    aes_key, xor_key = _load_image_keys(base_dir)
+    # 优先 hardlink
+    try:
+        from wx.win.v4.hardlink.hardlink_manager import HardLinkManager
+        hlm = HardLinkManager(client)
+        info = hlm.find_by_md5(md5)
+        if info and info.get("path") and os.path.exists(info["path"]):
+            path = info["path"]
+            if path.endswith(".dat"):
+                stream = decrypt_file_return_io(path, aes_key=aes_key, xor_key=xor_key)
+                if stream:
+                    return StreamingResponse(stream, media_type="image/jpeg")
+            else:
+                return FileResponse(path)
+    except Exception as e:
+        logger.debug("hardlink 表情解析失败: %s", e)
+    raise HTTPException(status_code=404, detail="image not found")
 
 
 @router.get("/resource-from-source-id/{session_id}/{msg_svr_id}")

@@ -47,7 +47,7 @@ class WindowsV4Properties(BaseModel):
     upload_status: Optional[int] = None
     download_status: Optional[int] = None
     server_seq: Optional[int] = None
-    origin_source: Optional[int] = None
+    origin_source: Optional[Dict] = None
     source_data: Optional[Dict] = None
     message_content_data: Optional[str] = None
     compress_content_data: Optional[str] = None
@@ -57,6 +57,10 @@ class WindowsV4Properties(BaseModel):
     sender: Optional[str] = None
     thumb: Optional[str] = None
     source: Optional[str] = None
+    # 消息内容（XML / JSON 解析后的结构化字段），按 local_type 适配
+    parsed_content: Optional[Dict] = None
+    # 通用附加字段
+    extra: Optional[Dict] = None
 
 
 class Msg(BaseModel):

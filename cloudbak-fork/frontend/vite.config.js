@@ -17,32 +17,32 @@ export default defineConfig({
     open: false, // 启动是否自动打开浏览器
     proxy: {
       ['/api']: {
-        // target: 'http://host.docker.internal:8000/',
-        target: 'http://127.0.0.1:8000/',
+        // target: 'http://host.docker.internal:8765/',
+        target: 'http://127.0.0.1:8765/',
         changeOrigin: true,
         log: 'debug'
       },
       ['/head']: {
-        // target: 'http://host.docker.internal:8000/',
-        target: 'http://127.0.0.1:8000/',
+        // target: 'http://host.docker.internal:8765/',
+        target: 'http://127.0.0.1:8765/',
         changeOrigin: true,
         log: 'debug'
       },
       ['/image']: {
-        // target: 'http://host.docker.internal:8000/api/msg',
-        target: 'http://127.0.0.1:8000/',
+        // target: 'http://host.docker.internal:8765/api/msg',
+        target: 'http://127.0.0.1:8765/',
         changeOrigin: true,
         log: 'debug'
       },
       ['/video']: {
-        // target: 'http://host.docker.internal:8000/api/msg',
-        target: 'http://127.0.0.1:8000/',
+        // target: 'http://host.docker.internal:8765/api/msg',
+        target: 'http://127.0.0.1:8765/',
         changeOrigin: true,
         log: 'debug'
       },
       ['/file']: {
-        // target: 'http://host.docker.internal:8000/api/msg',
-        target: 'http://127.0.0.1:8000/',
+        // target: 'http://host.docker.internal:8765/api/msg',
+        target: 'http://127.0.0.1:8765/',
         changeOrigin: true,
         log: 'debug'
       }
