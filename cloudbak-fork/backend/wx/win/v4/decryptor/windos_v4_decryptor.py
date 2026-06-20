@@ -137,8 +137,6 @@ def decrypt_db_file_v4(path: str, pkey: str, output_path: str):
             out_file.write(buf)
         return True
 
-    decrypted_buf = bytearray()
-
     # Get the salt from the start of the file for key decryption
     salt = buf[:16]
     # XOR salt with 0x3a to get the mac_salt
@@ -153,24 +151,19 @@ def decrypt_db_file_v4(path: str, pkey: str, output_path: str):
     # PBKDF2 to derive the mac_key
     mac_key = pbkdf2_hmac(key, mac_salt, 2)
 
-    # Append the SQLite header to the decrypted buffer
-    decrypted_buf.extend(SQLITE_HEADER)
-    decrypted_buf.append(0x00)
-
     # Calculate reserve size for hash verification and padding
     reserve = IV_SIZE + HMAC_SHA256_SIZE
     reserve = (reserve + AES_BLOCK_SIZE - 1) // AES_BLOCK_SIZE * AES_BLOCK_SIZE
 
     total_page = len(buf) // PAGE_SIZE
     # logger = get_context_logger()
+
+    first_page_plain = None
+    decrypted_pages = []
     for cur_page in range(total_page):
         offset = SALT_SIZE if cur_page == 0 else 0
         start = cur_page * PAGE_SIZE
         end = start + PAGE_SIZE
-
-        # if end > len(buf):
-        #     logger.warning(f"Skip page {cur_page + 1}: exceeds buffer size")
-        #     continue
 
         # Compute HMAC hash for verification
         hash_mac = compute_hmac(mac_key, buf[start + offset:end - reserve + IV_SIZE], cur_page + 1)
@@ -198,8 +191,37 @@ def decrypt_db_file_v4(path: str, pkey: str, output_path: str):
         decryptor = cipher.decryptor()
         decrypted_data = decryptor.update(buf[start + offset:end - reserve]) + decryptor.finalize()
 
-        decrypted_buf.extend(decrypted_data)
-        decrypted_buf.extend(buf[end - reserve:end])
+        if cur_page == 0:
+            first_page_plain = decrypted_data
+        else:
+            decrypted_pages.append(decrypted_data)
+
+    # Build output buffer with valid SQLite header
+    decrypted_buf = bytearray()
+    decrypted_buf.extend(SQLITE_HEADER)
+    decrypted_buf.append(0x00)
+
+    # The decrypted first page contains the original SQLite header starting at offset 16
+    # (after the SQLCipher salt). Reconstruct a standard SQLite page header.
+    header_tail = first_page_plain[16:100] if len(first_page_plain) >= 100 else first_page_plain[16:]
+    header = bytearray(100)
+    header[:16] = SQLITE_HEADER + b'\x00'
+    header[16:16 + len(header_tail)] = header_tail
+    # Ensure page size and reserve are set correctly
+    header[16:18] = struct.pack('<H', PAGE_SIZE)
+    header[18] = 1
+    header[19] = 1
+    header[20] = reserve
+    header[21] = 0x40
+    header[22] = 0x20
+    header[23] = 0x20
+    decrypted_buf.extend(header)
+    decrypted_buf.extend(first_page_plain[100:] if len(first_page_plain) >= 100 else b'')
+    decrypted_buf.extend(b'\x00' * reserve)
+
+    for page_data in decrypted_pages:
+        decrypted_buf.extend(page_data)
+        decrypted_buf.extend(b'\x00' * reserve)
 
     # Write the decrypted data to the output file
     with open(output_path, 'wb') as out_file:
