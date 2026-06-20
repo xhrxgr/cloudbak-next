@@ -9,7 +9,9 @@ create_session.ps1
 decrypt_and_inspect.py
 sqlcipher4_decrypt*.py
 
-# wx_key 工具（压缩包）
+# wx_key 工具（隐私敏感）
+wx_key/
+wx_key_app/
 wx_key.zip
 
 # Python

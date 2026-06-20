@@ -1,8 +1,9 @@
+import os
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    secret_key: str = '547ec9b3147ab938be53aab7a7e3a8fd9d11b990423c6495cb0bce5937d29acf'
+    secret_key: str = os.environ.get('AUTH_SECRET_KEY', 'CHANGE_ME_IN_PRODUCTION')
     algorithm: str = 'HS256'
     # 重置密码后的默认密码
     reset_password: str = 'cloudbak@123'
