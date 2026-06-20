@@ -55,6 +55,8 @@ class WindowsV4Properties(BaseModel):
     WCDB_CT_message_content: Optional[int] = None
     WCDB_CT_source: Optional[int] = None
     sender: Optional[str] = None
+    thumb: Optional[str] = None
+    source: Optional[str] = None
 
 
 class Msg(BaseModel):

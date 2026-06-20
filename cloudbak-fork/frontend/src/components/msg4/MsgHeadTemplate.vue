@@ -140,11 +140,12 @@ const isSender = props.msg.sender === store.getters.getCurrentWxId;
         <msg-text-with-emoji :content="props.msg.data.content"/>
       </div>
       <!-- 图片消息 -->
-<!--      <div class="chat-img" v-else-if="props.msg.local_type === 3">-->
-<!--        <p>-->
-<!--          {{ props.msg.data.content }}-->
-<!--        </p>-->
-<!--      </div>-->
+      <div v-else-if="props.msg.local_type === 3" class="chat-img">
+        <img
+            :src="'/api/resources-v4/relative-resource?relative_path=' + props.msg.thumb + '&session_id=' + store.getters.getCurrentSessionId"
+            :data-original="props.msg.source ? '/api/resources-v4/relative-resource?relative_path=' + props.msg.source + '&session_id=' + store.getters.getCurrentSessionId : cleanedImage"
+            alt=""/>
+      </div>
       <!-- 视频消息 -->
 <!--      <div v-else-if="props.msg.local_type === 43" class="chat-img exclude">-->
 <!--        <video controls width="250" :poster="`/api/resources-v4/video-poster/${store.getters.getCurrentSessionId}/${props.msg._video?.msg.videomsg['@attributes']?.md5}`">-->

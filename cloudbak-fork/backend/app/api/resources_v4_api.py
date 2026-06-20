@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from app.enum.resource_enum import ResourceType
 from app.schemas.schemas import ContactHeadImgUrlOut
-from app.services.decode_wx_pictures import decrypt_file, decrypt_file_return_io
+from app.services.decode_wx_pictures import decrypt_file, decrypt_file_return_io, _load_image_keys
 from config.log_config import logger
 from wx.client_factory import ClientFactory
 from wx.common.filters.msg_filter import SingleMsgFilterObj
@@ -28,7 +28,7 @@ async def relative_resource(
     if client is None:
         logger.info(f"client {session_id} is not exists")
         raise HTTPException(status_code=404, detail="File not found")
-    base_dir = client.get_session_dir()
+    base_dir = client.get_wx_dir()
     relative_path = relative_path.replace("\\", '/')
     file_path = os.path.join(base_dir, relative_path)
     logger.info(f"file_path = {file_path}")
@@ -39,6 +39,7 @@ async def relative_resource(
         raise HTTPException(status_code=403, detail="Invalid path")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
+    aes_key, xor_key = _load_image_keys(base_dir)
     if resource_type == ResourceType.IMAGE:
         jpg_path = file_path.replace(".dat", ".jpg")
         if os.path.exists(jpg_path):
@@ -49,7 +50,7 @@ async def relative_resource(
         gif_path = file_path.replace(".dat", ".gif")
         if os.path.exists(gif_path):
             return FileResponse(gif_path)
-        decoded_path = decrypt_file(file_path)
+        decoded_path = decrypt_file(file_path, aes_key=aes_key, xor_key=xor_key)
         if decoded_path:
             return FileResponse(decoded_path)
     elif resource_type == ResourceType.FILE:
@@ -173,8 +174,9 @@ async def get_image_from_source_id(msg_svr_id: int, session_id: int, file_type: 
     logger.info("文件路径：%s", file_path)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
+    aes_key, xor_key = _load_image_keys(session_dir)
     if file_path.endswith('.dat'):
-        decrypted_stream = decrypt_file_return_io(file_path)
+        decrypted_stream = decrypt_file_return_io(file_path, aes_key=aes_key, xor_key=xor_key)
 
         if decrypted_stream is None:
             raise HTTPException(status_code=400, detail="Failed to decrypt the file")

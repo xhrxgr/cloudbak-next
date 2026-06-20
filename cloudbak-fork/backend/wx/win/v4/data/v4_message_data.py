@@ -1,5 +1,9 @@
 import array
+import hashlib
+from datetime import datetime
+from typing import Optional
 
+from google.protobuf.internal import decoder
 from sqlalchemy import inspect, select, func, literal_column
 
 from app.enum.msg_enum import FilterMode
@@ -12,6 +16,46 @@ from wx.win.v4.models.message_model import DynamicModel, Name2Id
 import zstandard as zstd
 
 from wx.win.v4.utils.zstandard_utils import ZstandardUtils
+
+
+def _extract_packed_md5(packed_info_data: bytes) -> Optional[str]:
+    """从 packed_info_data 的 protobuf 字段 3 中提取图片文件 md5"""
+    if not packed_info_data:
+        return None
+    try:
+        pos = 0
+        md5 = None
+        while pos < len(packed_info_data):
+            tag, pos = decoder._DecodeVarint(packed_info_data, pos)
+            wire_type = tag & 7
+            field_number = tag >> 3
+            if wire_type == 2:
+                length, pos2 = decoder._DecodeVarint(packed_info_data, pos)
+                value = packed_info_data[pos2:pos2 + length]
+                pos = pos2 + length
+                if field_number == 3:
+                    md5 = value.decode("utf-8", errors="ignore").strip().strip('"').strip()
+            elif wire_type == 0:
+                _, pos = decoder._DecodeVarint(packed_info_data, pos)
+            elif wire_type == 5:
+                pos += 4
+            elif wire_type == 1:
+                pos += 8
+            else:
+                break
+        return md5
+    except Exception as e:
+        logger.warning("解析 packed_info_data 失败: %s", e)
+        return None
+
+
+def _build_image_paths(username: str, create_time: int, md5: str) -> tuple[str, str]:
+    """构造微信 4.x 图片缩略图与原图的相对路径"""
+    user_hash = DynamicModel.md5_username(username)
+    month = datetime.fromtimestamp(create_time).strftime("%Y-%m")
+    thumb = f"msg/attach/{user_hash}/{month}/Img/{md5}_t.dat"
+    source = f"msg/attach/{user_hash}/{month}/Img/{md5}_h.dat"
+    return thumb, source
 
 
 class MessageManagerWindowsV4(MessageManager):
@@ -145,8 +189,16 @@ class MessageManagerWindowsV4(MessageManager):
                     msg.message_content_data = ZstandardUtils.convert_zstandard(m.message_content)
                     msg.source_data = ZstandardUtils.convert_zstandard(m.source)
                     msg.compress_content_data = ZstandardUtils.convert_zstandard(m.compress_content)
-                    # msg.packed_info_data_data = convert_zstandard(m.packed_info_data)
-                    # msg.packed_info_data_data = m.packed_info_data
+                    # 图片消息：从 packed_info_data 提取 md5 并构造相对路径
+                    if msg.local_type == 3 and m.packed_info_data:
+                        md5 = _extract_packed_md5(m.packed_info_data)
+                        if md5:
+                            try:
+                                msg.thumb, msg.source = _build_image_paths(
+                                    filter_obj.username, msg.create_time, md5
+                                )
+                            except Exception as e:
+                                logger.warning("构造图片路径失败: %s", e)
                     msgs.append(Msg(windows_v4_properties=msg))
 
                 # 判断查询结果数量
