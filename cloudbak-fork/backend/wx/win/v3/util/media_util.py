@@ -1,6 +1,10 @@
 import os
-import pilk
 from config.log_config import logger
+
+
+def _get_pilk():
+    import pilk
+    return pilk
 
 
 class MediaUtils:
@@ -16,6 +20,7 @@ class MediaUtils:
             # 将字节数组写入文件
             file.write(data)
         # silk 转 pcm
+        pilk = _get_pilk()
         pilk.decode(silk_mame, pcm_name, 44100)
         # pcm 转 mp3
         os.system(f"ffmpeg -y -f s16le -i {pcm_name} -ar 44100 -ac 1 {mp3_name}")
