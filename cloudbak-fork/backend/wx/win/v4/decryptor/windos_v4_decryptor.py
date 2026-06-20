@@ -196,27 +196,15 @@ def decrypt_db_file_v4(path: str, pkey: str, output_path: str):
         else:
             decrypted_pages.append(decrypted_data)
 
-    # Build output buffer with valid SQLite header
+    # Build output buffer with valid SQLite header.
+    # SQLCipher stores the salt in the first 16 bytes of the file (where the
+    # SQLite magic would be). The decrypted first page therefore starts with
+    # the original SQLite header at offset 16. Prepend the magic to rebuild a
+    # standard SQLite page, and zero out the SQLCipher reserve area so SQLite
+    # sees it as normal reserved space.
     decrypted_buf = bytearray()
-    decrypted_buf.extend(SQLITE_HEADER)
-    decrypted_buf.append(0x00)
-
-    # The decrypted first page contains the original SQLite header starting at offset 16
-    # (after the SQLCipher salt). Reconstruct a standard SQLite page header.
-    header_tail = first_page_plain[16:100] if len(first_page_plain) >= 100 else first_page_plain[16:]
-    header = bytearray(100)
-    header[:16] = SQLITE_HEADER + b'\x00'
-    header[16:16 + len(header_tail)] = header_tail
-    # Ensure page size and reserve are set correctly
-    header[16:18] = struct.pack('<H', PAGE_SIZE)
-    header[18] = 1
-    header[19] = 1
-    header[20] = reserve
-    header[21] = 0x40
-    header[22] = 0x20
-    header[23] = 0x20
-    decrypted_buf.extend(header)
-    decrypted_buf.extend(first_page_plain[100:] if len(first_page_plain) >= 100 else b'')
+    decrypted_buf.extend(SQLITE_HEADER + b'\x00')
+    decrypted_buf.extend(first_page_plain)
     decrypted_buf.extend(b'\x00' * reserve)
 
     for page_data in decrypted_pages:

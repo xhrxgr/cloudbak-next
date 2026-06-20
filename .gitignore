@@ -8,6 +8,11 @@ check_db.py
 create_session.ps1
 decrypt_and_inspect.py
 sqlcipher4_decrypt*.py
+brute_decrypt*.py
+decrypt_db_v4.py
+decrypt_db.py
+v3_decryptor.py
+v4_test.py
 
 # wx_key 工具（隐私敏感）
 wx_key/
